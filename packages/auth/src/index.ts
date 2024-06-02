@@ -1,4 +1,13 @@
-import { createMongoAbility, ForcedSubject, CreateAbility, MongoAbility, AbilityBuilder } from '@casl/ability';
+import { z } from 'zod';
+import { createMongoAbility, CreateAbility, MongoAbility, AbilityBuilder } from '@casl/ability';
+
+import { User } from './models/user';
+import { permissions } from './permissions';
+import { userSubject } from './subjects/user';
+import { projectSubject } from './subjects/project';
+import { organizationSubject } from './subjects/organization';
+import { billingSubject } from './subjects/billing';
+import { inviteSubject } from './subjects/invite';
 
 /**
  * 1 -> Actions
@@ -7,22 +16,36 @@ import { createMongoAbility, ForcedSubject, CreateAbility, MongoAbility, Ability
  * 2 -> Subjects
  * The "all" subject, represents the idea of an entity could handle all the roles/managements/permissions (internal control)
  */
-const actions = ['manage', 'invite', 'delete'] as const;
-const subjects = ['User', 'all'] as const;  //Be like entities (database entities)
+// const actions = ['manage', 'create', 'invite', 'delete'] as const;
+// const subjects = ['User', 'Project', 'all'] as const;  //Be like entities (database entities)
 
-type AppAbilities = [
-    typeof actions[number],
-    typeof subjects[number] | ForcedSubject<Exclude<typeof subjects[number], 'all'>>
-];
+const appAbilitiesSchema = z.union([
+    userSubject,
+    projectSubject,
+    organizationSubject,
+    billingSubject,
+    inviteSubject,
+    z.tuple([
+        z.literal('manage'),
+        z.literal('all')
+    ])
+])
+
+type AppAbilities = z.infer<typeof appAbilitiesSchema>
 
 export type AppAbility = MongoAbility<AppAbilities>;
 export const createAppAbility = createMongoAbility as CreateAbility<AppAbility>;
 
-const { build, can, cannot } = new AbilityBuilder(createAppAbility)
+export function defineAbilityFor(user: User) {
+    const builder = new AbilityBuilder(createAppAbility)
 
-can('invite', 'User')
-//CASL handle by default if some certain action was not declared, the current role cannot handle it
-//The following statement isn't necessary
-cannot('delete', 'User')
+    //For security reasons, just check if the user's role was defined
+    if (typeof permissions[user.role] !== 'function')
+        throw new Error(`Permissions for role: ${user.role} not found`)
 
-export const ability = build()
+    permissions[user.role](user, builder)
+
+    const ability = builder.build()
+
+    return ability
+}
